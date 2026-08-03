@@ -1,0 +1,43 @@
+[project]
+name = "posttrade"
+version = "0.1.0"
+description = "Distributed post-trade reconciliation pipeline against a live public market data feed"
+requires-python = ">=3.11"
+dependencies = [
+    "websockets>=12.0",
+    "redis>=5.0",
+    "pydantic>=2.6",
+    "pandas>=2.2",
+    "psycopg[binary]>=3.1",
+    "duckdb>=1.0",
+    "python-dotenv>=1.0",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "fakeredis>=2.21",
+    "mypy>=1.9",
+    "ruff>=0.4",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
