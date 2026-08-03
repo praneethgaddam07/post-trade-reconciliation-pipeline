@@ -4,8 +4,9 @@ import json
 import logging
 import multiprocessing
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import redis
@@ -39,7 +40,7 @@ class StepResult:
 
 
 def _synthetic_tick(symbol: str, seq: int) -> Tick:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Tick(
         symbol=symbol,
         sequence=seq,
@@ -60,7 +61,7 @@ def _get_lag(client: redis.Redis, stream_name: str, group_name: str) -> int:
         name = g["name"].decode() if isinstance(g["name"], bytes) else g["name"]
         if name == group_name:
             lag = g.get("lag")
-            return lag if lag is not None else g["pending"]
+            return int(lag if lag is not None else g["pending"])
     return 0
 
 
@@ -172,7 +173,7 @@ class LoadHarness:
     def _produce(
         self, target_rate: float, duration_s: float, sample_interval: float = 1.0
     ) -> tuple[int, float, list[LagSample]]:
-        result_queue: "multiprocessing.Queue[tuple[int, int, float]]" = multiprocessing.Queue()
+        result_queue: multiprocessing.Queue[tuple[int, int, float]] = multiprocessing.Queue()
         per_process_rate = target_rate / self.publisher_processes
         procs = [
             multiprocessing.Process(
@@ -248,7 +249,7 @@ class LoadHarness:
             samples=samples,
         )
 
-    def run_ramp(self, rates: list[float], duration_s: float = 8.0, grace_s: float = 10.0) -> list[StepResult]:
+    def run_ramp(self, rates: Sequence[float], duration_s: float = 8.0, grace_s: float = 10.0) -> list[StepResult]:
         self.start_workers()
         results: list[StepResult] = []
         try:

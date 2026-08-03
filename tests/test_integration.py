@@ -1,13 +1,14 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
+from typing import cast
 
 import fakeredis
 import pytest
 
 from posttrade.models import Exchange, Tick
 from posttrade.queue.redis_stream import StreamConsumer, StreamPublisher
-from posttrade.storage.timeseries_store import get_tick_store
+from posttrade.storage.timeseries_store import TimescaleTickStore, get_tick_store
 
 
 @pytest.mark.asyncio
@@ -34,12 +35,12 @@ async def test_ingest_to_queue_to_worker_to_store_end_to_end(postgres_required):
         client=sync_client,
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     published_ticks = [
         Tick(
             symbol=symbol,
             sequence=i,
-            price=Decimal("100") + i,
+            price=Decimal(100) + i,
             exchange=Exchange.COINBASE,
             channel="ticker",
             exchange_timestamp=now,
@@ -51,7 +52,7 @@ async def test_ingest_to_queue_to_worker_to_store_end_to_end(postgres_required):
         msg_id = await publisher.publish(tick)
         assert msg_id
 
-    store = get_tick_store()
+    store = cast(TimescaleTickStore, get_tick_store())
     try:
         consumed = consumer.read(count=10, block_ms=1000)
         assert len(consumed) == 5
@@ -70,6 +71,90 @@ async def test_ingest_to_queue_to_worker_to_store_end_to_end(postgres_required):
             cur.execute("DELETE FROM ticks WHERE symbol = %s;", [symbol])
         store.close()
         consumer.close()
+        await publisher.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_crash_pending_entries_reclaimed_by_another_consumer():
+    """A worker can read a batch (XREADGROUP) and die before acking it — a
+    process crash, an OOM kill, a bad deploy. Those messages must not be
+    lost: Redis keeps them in the consumer group's PEL (pending entries
+    list) under the dead consumer's name until another consumer reclaims
+    them via XAUTOCLAIM. This proves that recovery path actually works,
+    not just the happy-path exactly-once delivery the other tests cover."""
+    stream_name = f"test-ticks-crash-{uuid.uuid4().hex[:8]}"
+    group_name = f"test-group-crash-{uuid.uuid4().hex[:8]}"
+    symbol = f"TEST-CRASH-{uuid.uuid4().hex[:8]}"
+
+    server = fakeredis.FakeServer()
+    async_client = fakeredis.aioredis.FakeRedis(server=server)
+    sync_client_crashed = fakeredis.FakeRedis(server=server)
+    sync_client_recovery = fakeredis.FakeRedis(server=server)
+
+    publisher = StreamPublisher(redis_url="redis://fake", stream_name=stream_name, client=async_client)
+    crashed_consumer = StreamConsumer(
+        redis_url="redis://fake",
+        stream_name=stream_name,
+        group_name=group_name,
+        consumer_name="worker-crashed",
+        client=sync_client_crashed,
+    )
+    recovery_consumer = StreamConsumer(
+        redis_url="redis://fake",
+        stream_name=stream_name,
+        group_name=group_name,
+        consumer_name="worker-recovery",
+        client=sync_client_recovery,
+    )
+
+    now = datetime.now(UTC)
+    published_ticks = [
+        Tick(
+            symbol=symbol,
+            sequence=i,
+            price=Decimal(300) + i,
+            exchange=Exchange.COINBASE,
+            channel="ticker",
+            exchange_timestamp=now,
+            ingest_timestamp=now,
+        )
+        for i in range(1, 11)
+    ]
+    for tick in published_ticks:
+        await publisher.publish(tick)
+
+    try:
+        # worker-crashed reads the full batch — this creates PEL entries —
+        # then "dies": no ack, no further calls on this consumer at all.
+        crashed_read = crashed_consumer.read(count=100, block_ms=1000)
+        assert len(crashed_read) == 10
+        assert recovery_consumer.pending_count() == 10  # group-wide PEL, visible from either consumer
+
+        # worker-recovery reclaims everything idle >= 0ms (crashed_read is
+        # already idle by the time this runs) — this is the real recovery
+        # mechanism, not a simulation of one.
+        reclaimed = recovery_consumer.claim_stale(min_idle_ms=0, count=100)
+        assert len(reclaimed) == 10
+        assert sorted(m.tick.sequence for m in reclaimed) == list(range(1, 11))
+
+        # worker-recovery finishes the work the crashed worker never did
+        recovery_consumer.ack_batch([m.message_id for m in reclaimed])
+        assert recovery_consumer.pending_count() == 0
+
+        # PEL is genuinely empty now (not just re-claimable) — acked
+        # entries are gone, so a further claim attempt finds nothing.
+        third_consumer = StreamConsumer(
+            redis_url="redis://fake",
+            stream_name=stream_name,
+            group_name=group_name,
+            consumer_name="worker-recovery-2",
+            client=fakeredis.FakeRedis(server=server),
+        )
+        assert third_consumer.claim_stale(min_idle_ms=0, count=100) == []
+        third_consumer.close()
+    finally:
+        crashed_consumer.close()
+        recovery_consumer.close()
         await publisher.close()
 
 
@@ -96,12 +181,12 @@ async def test_batched_write_and_ack_matches_individual_path(postgres_required):
         client=sync_client,
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     published_ticks = [
         Tick(
             symbol=symbol,
             sequence=i,
-            price=Decimal("200") + i,
+            price=Decimal(200) + i,
             exchange=Exchange.COINBASE,
             channel="ticker",
             exchange_timestamp=now,
@@ -112,7 +197,7 @@ async def test_batched_write_and_ack_matches_individual_path(postgres_required):
     for tick in published_ticks:
         await publisher.publish(tick)
 
-    store = get_tick_store()
+    store = cast(TimescaleTickStore, get_tick_store())
     try:
         consumed = consumer.read(count=100, block_ms=1000)
         assert len(consumed) == 20

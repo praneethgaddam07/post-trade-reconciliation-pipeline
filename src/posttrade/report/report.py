@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import matplotlib
 
@@ -102,8 +102,8 @@ def generate_break_report(symbols: list[str], hours_back: int = 6, minutes_forwa
     Phase 5 ground truth log if any planted anomalies are present."""
     reconciler = Reconciler()
     book_store = BookStore()
-    start = datetime.now(timezone.utc) - timedelta(hours=hours_back)
-    end = datetime.now(timezone.utc) + timedelta(minutes=minutes_forward)
+    start = datetime.now(UTC) - timedelta(hours=hours_back)
+    end = datetime.now(UTC) + timedelta(minutes=minutes_forward)
 
     try:
         breaks = reconciler.reconcile_all(symbols, start, end)
@@ -114,7 +114,7 @@ def generate_break_report(symbols: list[str], hours_back: int = 6, minutes_forwa
         book_store.close()
 
     lines = ["# Break Report", ""]
-    lines.append(f"Generated {datetime.now(timezone.utc).isoformat()} — symbols: {', '.join(symbols)}")
+    lines.append(f"Generated {datetime.now(UTC).isoformat()} — symbols: {', '.join(symbols)}")
     lines.append("")
     lines.append(f"**Total breaks found: {len(breaks)}**")
     lines.append("")

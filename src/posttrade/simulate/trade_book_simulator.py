@@ -2,7 +2,7 @@ import itertools
 import logging
 import random
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from posttrade.config import settings
@@ -51,7 +51,7 @@ class TradeBookSimulator:
         self._avg_price: dict[str, Decimal] = {}
         self._last_price: dict[str, Decimal] = {}
         self._recent_sequences: dict[str, list[int]] = {}
-        self._fill_sequences: dict[str, itertools.count] = {}
+        self._fill_sequences: dict[str, itertools.count[int]] = {}
         self._order_ids = itertools.count(1)
 
         self.fills_emitted = 0
@@ -158,7 +158,7 @@ class TradeBookSimulator:
         self._avg_price[symbol] = fill.price
 
     def _write_position(
-        self, symbol: str, timestamp, fill_id: str, quantity_override: Decimal | None = None
+        self, symbol: str, timestamp: datetime, fill_id: str, quantity_override: Decimal | None = None
     ) -> None:
         quantity = quantity_override if quantity_override is not None else self._true_position[symbol]
         position = Position(
@@ -170,7 +170,7 @@ class TradeBookSimulator:
         )
         self.book_store.write_position(position)
 
-    def _plant_sequence_gap(self, symbol: str, planted_at) -> None:
+    def _plant_sequence_gap(self, symbol: str, planted_at: datetime) -> None:
         seqs = sorted(self._recent_sequences.get(symbol, []))
         if len(seqs) < 6:
             return

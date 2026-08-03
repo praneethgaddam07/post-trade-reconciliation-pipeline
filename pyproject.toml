@@ -22,6 +22,7 @@ dev = [
     "fakeredis>=2.21",
     "mypy>=1.9",
     "ruff>=0.4",
+    "pandas-stubs>=2.2",
 ]
 
 [build-system]
@@ -31,13 +32,22 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+posttrade = ["py.typed"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
 
 [tool.ruff]
 line-length = 100

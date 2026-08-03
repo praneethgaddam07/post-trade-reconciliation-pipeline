@@ -136,7 +136,7 @@ class TimescaleTickStore:
         """
         with self._conn.cursor() as cur:
             cur.execute(query, {"symbol": symbol, "start": start, "end": end})
-            columns = [desc[0] for desc in cur.description]
+            columns = [desc[0] for desc in cur.description or []]
             rows = cur.fetchall()
         return pd.DataFrame(rows, columns=columns)
 
@@ -202,7 +202,9 @@ class DuckDBTickStore:
         return len(ticks)
 
     def count(self) -> int:
-        return self._conn.execute("SELECT count(*) FROM ticks").fetchone()[0]
+        row = self._conn.execute("SELECT count(*) FROM ticks").fetchone()
+        assert row is not None
+        return int(row[0])
 
     def delete_sequences(self, symbol: str, sequences: list[int]) -> list[int]:
         if not sequences:

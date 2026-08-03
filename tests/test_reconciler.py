@@ -1,15 +1,15 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import cast
 
 import pandas as pd
-import pytest
 
-from posttrade.models import BreakType, Exchange, Fill, Position, Side, Tick
+from posttrade.models import Break, BreakType, Exchange, Fill, Position, Side, Tick
 from posttrade.reconcile.reconciler import Reconciler
 from posttrade.storage.book_store import BookStore
-from posttrade.storage.timeseries_store import get_tick_store
+from posttrade.storage.timeseries_store import TimescaleTickStore, get_tick_store
 
 
 def _reconciler_stub(tick_match_window=timedelta(seconds=5), position_drift_tolerance=Decimal("0.000001")):
@@ -20,7 +20,7 @@ def _reconciler_stub(tick_match_window=timedelta(seconds=5), position_drift_tole
 
 
 def _ts(offset_seconds=0):
-    return datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=offset_seconds)
+    return datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=offset_seconds)
 
 
 # --- unmatched_fill -----------------------------------------------------
@@ -142,9 +142,12 @@ def test_reconciler_finds_seeded_breaks_with_perfect_precision_and_recall(postgr
     those breaks — a deterministic version of the measurement validated
     manually against the trade book simulator's live-feed output."""
     symbol = f"TEST-{uuid.uuid4().hex[:8]}"
-    tick_store = get_tick_store()
+    # postgres_required guarantees the timescale backend; cast to the
+    # concrete type since the cleanup below needs a raw connection, which
+    # isn't part of the TickStore protocol's public interface.
+    tick_store = cast(TimescaleTickStore, get_tick_store())
     book_store = BookStore()
-    base = datetime.now(timezone.utc)
+    base = datetime.now(UTC)
 
     try:
         # clean ticks 1..5, minus a deliberately deleted sequence 3 (gap)
@@ -153,7 +156,7 @@ def test_reconciler_finds_seeded_breaks_with_perfect_precision_and_recall(postgr
                 Tick(
                     symbol=symbol,
                     sequence=seq,
-                    price=Decimal("100"),
+                    price=Decimal(100),
                     exchange=Exchange.COINBASE,
                     channel="ticker",
                     exchange_timestamp=base + timedelta(seconds=seq),
@@ -166,7 +169,7 @@ def test_reconciler_finds_seeded_breaks_with_perfect_precision_and_recall(postgr
             order_id="o1",
             symbol=symbol,
             sequence=1,
-            price=Decimal("100"),
+            price=Decimal(100),
             quantity=Decimal("1.0"),
             side=Side.BUY,
             timestamp=base,
@@ -176,7 +179,7 @@ def test_reconciler_finds_seeded_breaks_with_perfect_precision_and_recall(postgr
             order_id="o2",
             symbol=symbol,
             sequence=2,
-            price=Decimal("100"),
+            price=Decimal(100),
             quantity=Decimal("0.5"),
             side=Side.BUY,
             timestamp=base + timedelta(minutes=20),  # far outside match window
@@ -187,13 +190,13 @@ def test_reconciler_finds_seeded_breaks_with_perfect_precision_and_recall(postgr
         # true cumulative position after both fills = 1.5, but we record a
         # drifted 1.9 for the second fill
         book_store.write_position(
-            Position(symbol=symbol, quantity=Decimal("1.0"), avg_price=Decimal("100"), last_updated=base, last_fill_id=clean_fill.fill_id)
+            Position(symbol=symbol, quantity=Decimal("1.0"), avg_price=Decimal(100), last_updated=base, last_fill_id=clean_fill.fill_id)
         )
         book_store.write_position(
             Position(
                 symbol=symbol,
                 quantity=Decimal("1.9"),
-                avg_price=Decimal("100"),
+                avg_price=Decimal(100),
                 last_updated=base + timedelta(minutes=20),
                 last_fill_id=unmatched_fill.fill_id,
             )
@@ -205,7 +208,7 @@ def test_reconciler_finds_seeded_breaks_with_perfect_precision_and_recall(postgr
         finally:
             r.close()
 
-        by_type = {}
+        by_type: dict[BreakType, list[Break]] = {}
         for b in breaks:
             by_type.setdefault(b.break_type, []).append(b)
 

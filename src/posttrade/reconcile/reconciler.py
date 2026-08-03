@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
+from itertools import pairwise
 
 import pandas as pd
 
@@ -78,10 +79,11 @@ class Reconciler:
         # anomaly deliberately corrupts timestamp, and using it here would
         # desync the cumulative sum from the book's true fill order.
         fills_sorted = fills_df.sort_values("sequence").copy()
-        signed_qty = fills_sorted.apply(
-            lambda r: Decimal(str(r["quantity"])) if r["side"] == "buy" else -Decimal(str(r["quantity"])), axis=1
-        )
-        fills_sorted["expected_position"] = signed_qty.cumsum()
+        signed_qty = [
+            Decimal(str(qty)) if side == "buy" else -Decimal(str(qty))
+            for qty, side in zip(fills_sorted["quantity"], fills_sorted["side"], strict=True)
+        ]
+        fills_sorted["expected_position"] = pd.Series(signed_qty, index=fills_sorted.index).cumsum()
         expected_by_fill = dict(zip(fills_sorted["fill_id"], fills_sorted["expected_position"]))
 
         for _, pos in positions_df.iterrows():
@@ -113,7 +115,7 @@ class Reconciler:
         df = ticks_df.sort_values("sequence")
         seq_time = dict(zip(df["sequence"], df["time"]))
         seqs = sorted(seq_time.keys())
-        for prev, curr in zip(seqs, seqs[1:]):
+        for prev, curr in pairwise(seqs):
             if curr - prev > 1:
                 breaks.append(
                     Break(

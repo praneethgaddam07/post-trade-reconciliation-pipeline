@@ -1,7 +1,9 @@
 # Post-Trade Reconciliation Pipeline
 
+[![CI](https://github.com/praneethgaddam07/post-trade-reconciliation-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/praneethgaddam07/post-trade-reconciliation-pipeline/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-29%20passing-brightgreen)
+![mypy](https://img.shields.io/badge/mypy-strict-2A6DB2)
 ![Redis Streams](https://img.shields.io/badge/queue-Redis%20Streams%20%2B%20consumer%20group-DC382D?logo=redis&logoColor=white)
 ![TimescaleDB](https://img.shields.io/badge/storage-TimescaleDB-FDB515)
 ![Throughput](https://img.shields.io/badge/load%20tested-up%20to%201.5M%20msg%2Fs%20target-orange)
@@ -33,7 +35,8 @@ no rounding up — where the system fell short of "clean," that's reported too
 | **Publisher throughput ceiling** | client-side saturation at **~80,000–140,000 msg/s** (batched, multi-process publisher; ramped 2,000 → 1,500,000 msg/s target) |
 | **Worker/store pipeline ceiling** | **still not found** — fully drained a 174,000-message backlog every time, even at 1.5M msg/s target |
 | **Bugs found & fixed via this measurement** | position-drift sort-key bug (397 false positives) and a single-asyncio-loop publisher masquerading as "the ceiling" — both root-caused, fixed, regression-tested |
-| **Test suite** | **28/28 passing**, incl. real ephemeral-Redis (`fakeredis`) integration tests for both the per-message and batched write paths |
+| **Test suite** | **29/29 passing**, incl. a crash/recovery test (worker dies mid-batch, `XAUTOCLAIM` reclaims its PENDING entries) — not just happy-path delivery |
+| **Type/lint** | `mypy --strict` clean on `src/`, `ruff` clean, enforced on every push via GitHub Actions |
 | **Observability** | structured JSON logs + Prometheus metrics per worker, live Grafana dashboard — [real screenshot below](#observability), not a mockup |
 
 ## Architecture
@@ -146,7 +149,7 @@ docker compose up -d   # Redis, TimescaleDB, Prometheus, Grafana
 ./scripts/run_load_test.sh   # find the throughput ceiling
 ./scripts/run_pipeline.sh    # ingest, drain, simulate anomalies, reconcile
 
-pytest -v                    # 28 tests, unit + fakeredis integration
+pytest -v                    # 29 tests, unit + fakeredis integration
 ```
 
 Grafana is live at `http://localhost:3000` (anonymous viewer access) once
@@ -180,6 +183,16 @@ always matches the backlog exactly.)
 Verified two ways: the pool's own return values, and an independent
 `GROUP BY worker` query against the rows actually written to TimescaleDB —
 both agreed exactly.
+
+**Crash recovery, not just happy-path delivery.** A worker can read a batch
+via `XREADGROUP` and die before acking it — a real process crash, not a
+hypothetical. `test_worker_crash_pending_entries_reclaimed_by_another_consumer`
+reads a batch under one consumer name and abandons it (no ack, connection
+just closed), then has a second consumer call `XAUTOCLAIM` to reclaim those
+PENDING entries, finish the work, and ack them — then confirms the group's
+PEL is genuinely empty afterward, not just re-claimable. This is what makes
+"Redis Streams consumer group" a real fault-tolerance mechanism in this
+project rather than a queue that happens to distribute reads.
 
 ### Reconciler — measured precision/recall against planted ground truth
 
@@ -317,6 +330,26 @@ shows all 4 workers actively processing at once — distinct colored lines
 because each worker really is a separate OS process with its own metrics
 endpoint, not a single aggregate counter split after the fact.
 
+**A note on the scrape networking model.** The ingestor and workers run as
+host processes, not containers, so Prometheus (which does run in Docker)
+needs `host.docker.internal` to reach back out and scrape them. That resolves
+automatically on Docker Desktop / OrbStack; on Linux it needs the
+`extra_hosts: host.docker.internal:host-gateway` entry already in
+`docker-compose.yml` (a Docker Compose feature since Engine 20.10, not a
+Docker-Desktop-only trick) — this was verified working on Mac/OrbStack for
+the screenshot above, not re-verified against real Linux Docker in this
+environment. If your setup doesn't support `host-gateway`, edit the static
+targets directly in `observability/prometheus.yml`.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and PR to `main`: `ruff check`,
+`mypy --strict` against `src/`, `mypy` against `tests/` (a relaxed profile —
+see the `[[tool.mypy.overrides]]` in `pyproject.toml`; strict-typing test
+files isn't standard practice), and the full pytest suite against real Redis
+and TimescaleDB service containers — the same infra dependency as running it
+locally, not mocked away for CI's sake.
+
 ## Limitations
 
 - **Single-machine Redis and Postgres**, not a cluster — this proves the
@@ -341,6 +374,7 @@ endpoint, not a single aggregate counter split after the fact.
 
 ```
 post-trade-reconciliation-pipeline/
+├── .github/workflows/    # ci.yml — ruff, mypy --strict, pytest on every push/PR
 ├── src/posttrade/
 │   ├── models/          # Tick, Trade, Fill, Position, Break (Pydantic)
 │   ├── ingest/           # async_ingestor.py
@@ -353,7 +387,7 @@ post-trade-reconciliation-pipeline/
 │   ├── observability/               # logging_config.py, metrics.py
 │   └── report/                        # report.py
 ├── observability/       # prometheus.yml, grafana provisioning + dashboard JSON
-├── tests/               # 28 tests: unit + fakeredis integration
+├── tests/               # 29 tests: unit + fakeredis integration
 ├── scripts/             # run_pipeline.sh, run_load_test.sh
 ├── reports/             # generated break_report.md, chart + json, Grafana screenshot
 └── docker-compose.yml   # Redis, TimescaleDB, Prometheus, Grafana

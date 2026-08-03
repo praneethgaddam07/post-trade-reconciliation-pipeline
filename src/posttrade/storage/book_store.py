@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 import psycopg
@@ -120,10 +121,10 @@ class BookStore:
                 ],
             )
 
-    def _df(self, query: str, params: dict) -> pd.DataFrame:
+    def _df(self, query: str, params: dict[str, Any]) -> pd.DataFrame:
         with self._conn.cursor() as cur:
             cur.execute(query, params)
-            columns = [desc[0] for desc in cur.description]
+            columns = [desc[0] for desc in cur.description or []]
             rows = cur.fetchall()
         return pd.DataFrame(rows, columns=columns)
 
@@ -142,7 +143,7 @@ class BookStore:
     def read_planted_anomalies_df(self) -> pd.DataFrame:
         with self._conn.cursor() as cur:
             cur.execute("SELECT * FROM planted_anomalies ORDER BY planted_at;")
-            columns = [desc[0] for desc in cur.description]
+            columns = [desc[0] for desc in cur.description or []]
             rows = cur.fetchall()
         return pd.DataFrame(rows, columns=columns)
 

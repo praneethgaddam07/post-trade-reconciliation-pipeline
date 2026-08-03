@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -8,7 +8,7 @@ from posttrade.models import Break, BreakType, Exchange, Fill, Position, Side, T
 
 
 def _now():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def test_tick_is_immutable():
@@ -27,7 +27,7 @@ def test_tick_is_immutable():
 
 def test_tick_requires_price_and_sequence():
     with pytest.raises(ValidationError):
-        Tick(
+        Tick(  # type: ignore[call-arg]  # intentionally omitting required fields to test runtime validation
             symbol="BTC-USD",
             exchange=Exchange.COINBASE,
             channel="ticker",
@@ -42,7 +42,7 @@ def test_fill_default_not_anomalous():
         order_id="o1",
         symbol="BTC-USD",
         sequence=1,
-        price=Decimal("100"),
+        price=Decimal(100),
         quantity=Decimal("0.01"),
         side=Side.BUY,
         timestamp=_now(),
@@ -57,7 +57,7 @@ def test_fill_is_immutable():
         order_id="o1",
         symbol="BTC-USD",
         sequence=1,
-        price=Decimal("100"),
+        price=Decimal(100),
         quantity=Decimal("0.01"),
         side=Side.BUY,
         timestamp=_now(),
@@ -67,9 +67,9 @@ def test_fill_is_immutable():
 
 
 def test_break_type_enum_values():
-    assert BreakType.UNMATCHED_FILL == "unmatched_fill"
-    assert BreakType.POSITION_DRIFT == "position_drift"
-    assert BreakType.SEQUENCE_GAP == "sequence_gap"
+    assert BreakType.UNMATCHED_FILL.value == "unmatched_fill"
+    assert BreakType.POSITION_DRIFT.value == "position_drift"
+    assert BreakType.SEQUENCE_GAP.value == "sequence_gap"
 
 
 def test_break_construction():
@@ -85,5 +85,5 @@ def test_break_construction():
 
 
 def test_position_accepts_negative_quantity_for_short():
-    pos = Position(symbol="ETH-USD", quantity=Decimal("-1.5"), avg_price=Decimal("1800"), last_updated=_now())
+    pos = Position(symbol="ETH-USD", quantity=Decimal("-1.5"), avg_price=Decimal(1800), last_updated=_now())
     assert pos.quantity == Decimal("-1.5")

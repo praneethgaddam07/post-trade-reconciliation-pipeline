@@ -8,8 +8,8 @@ from posttrade.observability.metrics import (
 )
 
 __all__ = [
-    "configure_structured_logging",
     "batch_write_seconds",
+    "configure_structured_logging",
     "consumer_lag",
     "start_metrics_server",
     "ticks_ingested_total",

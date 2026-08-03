@@ -31,6 +31,13 @@ services:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9090:9090"
+    # The ingestor and workers run as host processes (not containers), so
+    # Prometheus needs to reach back out to the host to scrape them.
+    # host.docker.internal resolves automatically on Docker Desktop/OrbStack
+    # (Mac/Windows); this extra_hosts entry is what makes it resolve on
+    # Linux too, via Docker Compose's "host-gateway" special value
+    # (Docker Engine >=20.10, i.e. effectively all current installs).
+    # See README > Observability for details and the manual-IP fallback.
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

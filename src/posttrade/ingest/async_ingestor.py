@@ -4,8 +4,9 @@ import json
 import logging
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 import websockets
 
@@ -20,7 +21,7 @@ _RELEVANT_TYPES = {"ticker", "match", "last_match"}
 
 
 def _parse_exchange_timestamp(raw: str) -> datetime:
-    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    return datetime.fromisoformat(raw)
 
 
 class AsyncIngestor:
@@ -46,7 +47,7 @@ class AsyncIngestor:
         self.stream_name = stream_name or settings.redis_stream_name
         self.throughput_log_interval = throughput_log_interval
 
-        self._sequences: dict[str, itertools.count] = defaultdict(lambda: itertools.count(1))
+        self._sequences: dict[str, itertools.count[int]] = defaultdict(lambda: itertools.count(1))
         self._publisher: StreamPublisher | None = None
         self._msg_count = 0
         self._window_start = time.monotonic()
@@ -96,7 +97,7 @@ class AsyncIngestor:
         await self._publish(tick)
         self._log_throughput()
 
-    def _normalize(self, data: dict, msg_type: str) -> Tick | None:
+    def _normalize(self, data: dict[str, Any], msg_type: str) -> Tick | None:
         symbol = data.get("product_id")
         price_raw = data.get("price")
         if symbol is None or price_raw is None:
@@ -119,7 +120,7 @@ class AsyncIngestor:
 
         exch_ts_raw = data.get("time")
         exchange_timestamp = (
-            _parse_exchange_timestamp(exch_ts_raw) if exch_ts_raw else datetime.now(timezone.utc)
+            _parse_exchange_timestamp(exch_ts_raw) if exch_ts_raw else datetime.now(UTC)
         )
 
         sequence = next(self._sequences[symbol])
@@ -134,7 +135,7 @@ class AsyncIngestor:
             exchange=Exchange.COINBASE,
             channel=channel,
             exchange_timestamp=exchange_timestamp,
-            ingest_timestamp=datetime.now(timezone.utc),
+            ingest_timestamp=datetime.now(UTC),
         )
 
     async def _publish(self, tick: Tick) -> None:
