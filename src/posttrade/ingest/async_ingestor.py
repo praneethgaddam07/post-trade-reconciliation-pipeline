@@ -11,6 +11,7 @@ import websockets
 
 from posttrade.config import settings
 from posttrade.models import Exchange, Side, Tick
+from posttrade.observability.metrics import start_metrics_server, ticks_ingested_total
 from posttrade.queue.redis_stream import StreamPublisher
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,8 @@ class AsyncIngestor:
         self.total_published = 0
 
     async def run(self, max_reconnects: int | None = None) -> None:
+        if settings.metrics_enabled:
+            start_metrics_server(settings.metrics_port_ingestor)
         self._publisher = StreamPublisher(self.redis_url, self.stream_name)
         backoff = 1.0
         max_backoff = 30.0
@@ -138,6 +141,7 @@ class AsyncIngestor:
         assert self._publisher is not None
         await self._publisher.publish(tick)
         self.total_published += 1
+        ticks_ingested_total.labels(symbol=tick.symbol, channel=tick.channel).inc()
 
     def _log_throughput(self) -> None:
         self._msg_count += 1
@@ -145,16 +149,20 @@ class AsyncIngestor:
         if elapsed >= self.throughput_log_interval:
             rate = self._msg_count / elapsed
             logger.info(
-                "ingest throughput: %.1f msg/s (%d msgs / %.1fs), total=%d",
-                rate,
-                self._msg_count,
-                elapsed,
-                self.total_published,
+                "ingest throughput",
+                extra={
+                    "msg_per_sec": round(rate, 1),
+                    "window_msgs": self._msg_count,
+                    "window_seconds": round(elapsed, 1),
+                    "total_published": self.total_published,
+                },
             )
             self._msg_count = 0
             self._window_start = time.monotonic()
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    from posttrade.observability.logging_config import configure_structured_logging
+
+    configure_structured_logging()
     asyncio.run(AsyncIngestor().run())

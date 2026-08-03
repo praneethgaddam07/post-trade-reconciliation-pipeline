@@ -33,5 +33,11 @@ class Settings:
 
     worker_pool_size: int = field(default_factory=lambda: int(os.environ.get("WORKER_POOL_SIZE", "4")))
 
+    metrics_enabled: bool = field(default_factory=lambda: os.environ.get("METRICS_ENABLED", "true").lower() == "true")
+    metrics_port_ingestor: int = field(default_factory=lambda: int(os.environ.get("METRICS_PORT_INGESTOR", "9100")))
+    metrics_port_worker_base: int = field(
+        default_factory=lambda: int(os.environ.get("METRICS_PORT_WORKER_BASE", "9101"))
+    )
+
 
 settings = Settings()

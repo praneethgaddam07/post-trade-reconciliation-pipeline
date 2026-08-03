@@ -52,6 +52,19 @@ class StreamPublisher:
         msg_id = await self._redis.xadd(self.stream_name, {_FIELD: tick.model_dump_json()})
         return msg_id.decode() if isinstance(msg_id, bytes) else msg_id
 
+    async def publish_batch(self, ticks: list[Tick]) -> list[str]:
+        """Pipelines N XADD calls into a single network round-trip instead of
+        awaiting each one sequentially — this is what lets the load harness's
+        publisher keep up with high target rates instead of being limited by
+        per-call round-trip latency."""
+        if not ticks:
+            return []
+        pipe = self._redis.pipeline()
+        for tick in ticks:
+            pipe.xadd(self.stream_name, {_FIELD: tick.model_dump_json()})
+        results = await pipe.execute()
+        return [r.decode() if isinstance(r, bytes) else r for r in results]
+
     async def close(self) -> None:
         await self._redis.aclose()
 
@@ -104,6 +117,11 @@ class StreamConsumer:
 
     def ack(self, message_id: str) -> None:
         self._redis.xack(self.stream_name, self.group_name, message_id)
+
+    def ack_batch(self, message_ids: list[str]) -> None:
+        if not message_ids:
+            return
+        self._redis.xack(self.stream_name, self.group_name, *message_ids)
 
     def pending_count(self) -> int:
         summary = self._redis.xpending(self.stream_name, self.group_name)

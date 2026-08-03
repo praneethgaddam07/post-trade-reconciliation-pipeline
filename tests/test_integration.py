@@ -71,3 +71,65 @@ async def test_ingest_to_queue_to_worker_to_store_end_to_end(postgres_required):
         store.close()
         consumer.close()
         await publisher.close()
+
+
+@pytest.mark.asyncio
+async def test_batched_write_and_ack_matches_individual_path(postgres_required):
+    """Workers now batch a full XREADGROUP read into one COPY write and one
+    XACK call (see worker.py) instead of one round-trip per message. This
+    verifies that batched path end to end: same real store, same ephemeral
+    Redis pattern, just exercising write_ticks_batch/ack_batch directly."""
+    stream_name = f"test-ticks-batch-{uuid.uuid4().hex[:8]}"
+    group_name = f"test-group-batch-{uuid.uuid4().hex[:8]}"
+    symbol = f"TEST-BATCH-{uuid.uuid4().hex[:8]}"
+
+    server = fakeredis.FakeServer()
+    async_client = fakeredis.aioredis.FakeRedis(server=server)
+    sync_client = fakeredis.FakeRedis(server=server)
+
+    publisher = StreamPublisher(redis_url="redis://fake", stream_name=stream_name, client=async_client)
+    consumer = StreamConsumer(
+        redis_url="redis://fake",
+        stream_name=stream_name,
+        group_name=group_name,
+        consumer_name="test-batch-consumer",
+        client=sync_client,
+    )
+
+    now = datetime.now(timezone.utc)
+    published_ticks = [
+        Tick(
+            symbol=symbol,
+            sequence=i,
+            price=Decimal("200") + i,
+            exchange=Exchange.COINBASE,
+            channel="ticker",
+            exchange_timestamp=now,
+            ingest_timestamp=now,
+        )
+        for i in range(1, 21)
+    ]
+    for tick in published_ticks:
+        await publisher.publish(tick)
+
+    store = get_tick_store()
+    try:
+        consumed = consumer.read(count=100, block_ms=1000)
+        assert len(consumed) == 20
+
+        written = store.write_ticks_batch([msg.tick for msg in consumed], worker="test-batch-worker")
+        consumer.ack_batch([msg.message_id for msg in consumed])
+        assert written == 20
+
+        assert consumer.pending_count() == 0
+
+        df = store.read_ticks_df(symbol, now.replace(microsecond=0), now)
+        assert len(df) == 20
+        assert sorted(df["sequence"].tolist()) == list(range(1, 21))
+        assert (df["worker"] == "test-batch-worker").all()
+    finally:
+        with store._conn.cursor() as cur:
+            cur.execute("DELETE FROM ticks WHERE symbol = %s;", [symbol])
+        store.close()
+        consumer.close()
+        await publisher.close()

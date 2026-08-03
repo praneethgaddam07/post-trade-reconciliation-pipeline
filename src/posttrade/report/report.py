@@ -22,11 +22,26 @@ _COLORS = {
 }
 
 
+def _fmt_rate(value: float, _pos: int | None = None) -> str:
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:g}M"
+    if value >= 1_000:
+        return f"{value / 1_000:g}k"
+    return f"{value:g}"
+
+
 def plot_load_test(results_path: str, out_path: str) -> None:
     """Renders two single-axis panels (never a dual-axis chart) from the load
     harness's real step results: achieved throughput vs. target, and peak
     queue lag per step — the two signals that together show where the
-    pipeline actually stops keeping up."""
+    pipeline actually stops keeping up.
+
+    Both axes on the throughput panel are log-scale: target rates span three
+    orders of magnitude (2k -> 1.5M msg/s), so a linear y-axis would flatten
+    every step below ~150k against the top of the range. The lag panel uses
+    a symlog y-axis for the same reason, while still showing exact zeros
+    (a linear-near-zero, log-further-out scale) since "lag was exactly zero"
+    is itself meaningful — a log axis alone can't represent that."""
     with open(results_path) as f:
         steps = json.load(f)
 
@@ -34,7 +49,7 @@ def plot_load_test(results_path: str, out_path: str) -> None:
     actual = [s["actual_publish_rate"] for s in steps]
     max_lag = [s["max_lag_during_step"] for s in steps]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7), sharex=True, facecolor=_COLORS["surface"])
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7.5), sharex=True, facecolor=_COLORS["surface"])
     for ax in (ax1, ax2):
         ax.set_facecolor(_COLORS["surface"])
         for spine in ax.spines.values():
@@ -42,12 +57,12 @@ def plot_load_test(results_path: str, out_path: str) -> None:
         ax.spines["bottom"].set_visible(True)
         ax.spines["bottom"].set_color(_COLORS["baseline"])
         ax.tick_params(colors=_COLORS["muted"])
-        ax.grid(axis="y", color=_COLORS["gridline"], linewidth=0.8)
+        ax.grid(axis="y", color=_COLORS["gridline"], linewidth=0.8, which="major")
         ax.set_axisbelow(True)
 
     ax1.plot(targets, targets, linestyle="--", color=_COLORS["muted"], linewidth=1.2, label="target rate (ideal)")
     ax1.plot(targets, actual, marker="o", color=_COLORS["throughput"], linewidth=2, label="actual publish rate")
-    ax1.set_ylabel("messages / sec", color=_COLORS["ink_secondary"])
+    ax1.set_ylabel("messages / sec (log scale)", color=_COLORS["ink_secondary"])
     ax1.set_title(
         "Achieved publish throughput vs. target rate", color=_COLORS["ink"], loc="left", fontsize=12, fontweight="bold"
     )
@@ -56,17 +71,25 @@ def plot_load_test(results_path: str, out_path: str) -> None:
         text.set_color(_COLORS["ink_secondary"])
 
     ax2.plot(targets, max_lag, marker="o", color=_COLORS["lag"], linewidth=2)
-    ax2.set_ylabel("peak consumer lag (messages)", color=_COLORS["ink_secondary"])
+    ax2.set_ylabel("peak consumer lag, messages\n(symlog scale)", color=_COLORS["ink_secondary"])
     ax2.set_xlabel("target publish rate (msg/s, log scale)", color=_COLORS["ink_secondary"])
     ax2.set_title(
         "Peak queue lag during each load step", color=_COLORS["ink"], loc="left", fontsize=12, fontweight="bold"
     )
 
     ax1.set_xscale("log")
+    ax1.set_yscale("log")
     ax2.set_xscale("log")
-    ax2.set_xticks(targets)
-    ax2.get_xaxis().set_major_formatter(mticker.ScalarFormatter())
-    ax2.get_xaxis().set_minor_formatter(mticker.NullFormatter())
+    ax2.set_yscale("symlog", linthresh=100)
+
+    for ax in (ax1, ax2):
+        ax.xaxis.set_major_locator(mticker.LogLocator(base=10))
+        ax.xaxis.set_minor_locator(mticker.LogLocator(base=10, subs=(2, 5)))
+        ax.xaxis.set_major_formatter(mticker.FuncFormatter(_fmt_rate))
+        ax.xaxis.set_minor_formatter(mticker.FuncFormatter(_fmt_rate))
+    ax1.yaxis.set_major_formatter(mticker.FuncFormatter(_fmt_rate))
+    ax2.tick_params(axis="x", which="minor", labelsize=8, labelcolor=_COLORS["muted"])
+    ax2.tick_params(axis="x", which="major", labelsize=9)
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, facecolor=_COLORS["surface"])

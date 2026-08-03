@@ -1,9 +1,10 @@
 # Post-Trade Reconciliation Pipeline
 
 ![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-27%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-28%20passing-brightgreen)
 ![Redis Streams](https://img.shields.io/badge/queue-Redis%20Streams%20%2B%20consumer%20group-DC382D?logo=redis&logoColor=white)
 ![TimescaleDB](https://img.shields.io/badge/storage-TimescaleDB-FDB515)
+![Throughput](https://img.shields.io/badge/load%20tested-up%20to%201.5M%20msg%2Fs%20target-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 A distributed Python system that ingests a live public crypto market data
@@ -29,9 +30,11 @@ no rounding up — where the system fell short of "clean," that's reported too
 |---|---|
 | **Distributed worker pool** | 4 OS processes, 938/938 messages processed — zero loss, zero duplication (verified two independent ways) |
 | **Reconciler precision / recall** | `unmatched_fill` **1.000 / 1.000** · `position_drift` **1.000 / 1.000** · `sequence_gap` 51/53 events |
-| **Real throughput ceiling found** | publisher plateaus at **~6,250 msg/s** (measured by ramping 100 → 25,000 msg/s, not estimated) |
-| **Bug found & fixed via this measurement** | position-drift sort-key bug caused 397 false positives — root-caused, fixed, regression-tested |
-| **Test suite** | **27/27 passing**, incl. a real ephemeral-Redis (`fakeredis`) integration test |
+| **Publisher throughput ceiling** | client-side saturation at **~80,000–140,000 msg/s** (batched, multi-process publisher; ramped 2,000 → 1,500,000 msg/s target) |
+| **Worker/store pipeline ceiling** | **still not found** — fully drained a 174,000-message backlog every time, even at 1.5M msg/s target |
+| **Bugs found & fixed via this measurement** | position-drift sort-key bug (397 false positives) and a single-asyncio-loop publisher masquerading as "the ceiling" — both root-caused, fixed, regression-tested |
+| **Test suite** | **28/28 passing**, incl. real ephemeral-Redis (`fakeredis`) integration tests for both the per-message and batched write paths |
+| **Observability** | structured JSON logs + Prometheus metrics per worker, live Grafana dashboard — [real screenshot below](#observability), not a mockup |
 
 ## Architecture
 
@@ -126,6 +129,9 @@ actually written to TimescaleDB.
 - **pytest** + **fakeredis** for the test suite, including a real ephemeral-Redis
   integration test
 - **matplotlib** for the load test chart
+- **Prometheus + Grafana** for live metrics (ticks/sec by worker, consumer
+  lag, batch write latency), **structured JSON logging** throughout the
+  ingestor and workers
 
 ## How to run it locally
 
@@ -134,14 +140,18 @@ Requires Docker and outbound internet access to a public crypto WebSocket feed.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-docker compose up -d
+docker compose up -d   # Redis, TimescaleDB, Prometheus, Grafana
 
 # one end-to-end demo pass: ingest -> workers -> simulator -> reconcile
 ./scripts/run_load_test.sh   # find the throughput ceiling
 ./scripts/run_pipeline.sh    # ingest, drain, simulate anomalies, reconcile
 
-pytest -v                    # 27 tests, unit + fakeredis integration
+pytest -v                    # 28 tests, unit + fakeredis integration
 ```
+
+Grafana is live at `http://localhost:3000` (anonymous viewer access) once
+the ingestor and workers are running — see [Observability](#observability)
+below.
 
 ## Results
 
@@ -213,33 +223,61 @@ sorting by that instead. Regression test:
 
 ### Load test — the real throughput ceiling
 
-Ramped a synthetic publisher from 100 to 25,000 msg/s against the real Redis
-Stream + 4-worker pool + TimescaleDB, sampling consumer lag throughout:
+**Generation 1** (single asyncio loop, one `XADD` per call, one autocommitted
+`INSERT` per tick) found a publisher-bound ceiling at ~6,250 msg/s — see
+[git history](../../commits/main) for those numbers. That result was itself
+a finding worth keeping: the "ceiling" it found belonged to the load-test
+tool, not the pipeline. So the tool was rebuilt:
+
+- **Batched writes**: each worker's `XREADGROUP` batch (up to 2,000 ticks) is
+  written to TimescaleDB in one `COPY` round-trip and acked in one `XACK`
+  call, instead of one round-trip per tick.
+- **Batched, multi-process publisher**: several OS processes each pipeline
+  batches of `XADD` calls, mirroring the worker pool's fan-out on the
+  producer side — so the measurement isn't capped by one process's
+  single-core, one-call-at-a-time round-trip latency.
+
+Re-ran the ramp from 2,000 to **1,500,000** msg/s target against the real
+Redis Stream + 4-worker pool + TimescaleDB, sampling consumer lag throughout:
 
 | Target rate | Actual publish rate | Peak lag | Fully drained after step |
 |---|---|---|---|
-| 100 | 100.0 | 1 | yes |
-| 250 | 250.0 | 0 | yes |
-| 500 | 500.0 | 0 | yes |
-| 1,000 | 1,000.0 | 0 | yes |
-| 2,000 | 2,000.0 | 1 | yes |
-| 4,000 | 4,000.0 | 8,591 | yes |
-| 8,000 | 6,038.0 | 40,438 | yes |
-| 15,000 | 6,245.6 | 47,357 | yes |
-| 25,000 | 6,240.4 | 44,770 | yes |
+| 2,000 | 1,787.7 | 0 | yes |
+| 5,000 | 4,627.9 | 0 | yes |
+| 10,000 | 9,219.1 | 0 | yes |
+| 20,000 | 18,445.7 | 0 | yes |
+| 40,000 | 37,293.7 | 0 | yes |
+| 60,000 | 55,830.5 | 200 | yes |
+| 80,000 | 74,292.8 | 200 | yes |
+| 100,000 | 92,856.8 | 0 | yes |
+| 150,000 | 139,363.4 | 5,200 | yes |
+| 200,000 | 134,512.9 | 96,400 | yes |
+| 350,000 | 118,965.6 | 173,800 | yes |
+| 500,000 | 113,961.2 | 49,300 | yes |
+| 750,000 | 89,490.2 | 89,400 | yes |
+| 1,000,000 | 83,133.5 | 81,900 | yes |
+| 1,500,000 | 102,336.9 | 117,800 | yes |
 
 ![throughput and lag vs target rate](reports/load_test_throughput_lag.png)
 
-**The actual bottleneck is the single-process async publisher, not the
-distributed worker pool.** Past a 4,000 msg/s target, achieved publish rate
-flattens at ~6,000–6,250 msg/s no matter how much higher the target goes —
-that's the ceiling of one `asyncio` loop doing sequential `XADD` calls. The
-4-worker pool, writing to TimescaleDB with one autocommitted `INSERT` per
-tick, never actually fell behind permanently: even after a 47,357-message
-backlog, it fully drained every time. **The worker/store pipeline's real
-ceiling was never found** — it's higher than ~6,250 msg/s, which is as far
-as this publisher could push it. A batched or multi-process publisher would
-be needed to find that number for real, rather than estimate it.
+**Up to a ~150,000 msg/s target, achieved publish rate tracks the target
+almost exactly with essentially zero queue lag** — the top panel's actual-rate
+line rides the ideal diagonal cleanly on a log-log scale. Past that, the
+publisher itself saturates and actual throughput plateaus in the
+**~80,000–140,000 msg/s** range no matter how much higher the target is
+pushed, with real run-to-run variance at extreme load (visible in the
+non-monotonic 200k→1.5M numbers) — a sign of CPU contention on a single dev
+machine (six publisher processes doing JSON serialization plus Redis's
+single-threaded command execution), not a clean deterministic wall.
+
+**The worker/store pipeline's ceiling still wasn't found.** Even the worst
+backlog observed — 173,800 messages, built up during the 350,000 msg/s step —
+fully drained to zero lag every single time within the grace period. Four
+workers doing batched `COPY` writes absorbed everything the publisher could
+throw at them. Finding *that* ceiling for real would mean building an even
+faster publisher (e.g. Redis's own `redis-benchmark`, or a compiled client) —
+a legitimate next step, and one this project stops short of rather than
+estimate.
 
 ### Live ingestion rate (for context, not the ceiling)
 
@@ -248,16 +286,50 @@ ETH-USD), observed throughput ranged ~5–21 msg/s depending on real market
 activity during the capture window. This is the exchange's rate, not this
 system's — it's the load test above that characterizes the pipeline itself.
 
+## Observability
+
+Structured JSON logs (one object per line — `worker`, `pid`, `batch_size`,
+`seq_start`/`seq_end`, `symbol` as real fields, not embedded in a format
+string) and Prometheus metrics are wired into the ingestor and every worker:
+
+- `posttrade_ticks_ingested_total{symbol,channel}` — Counter
+- `posttrade_ticks_processed_total{worker}` — Counter
+- `posttrade_batch_write_seconds{worker}` — Histogram (batch COPY latency)
+- `posttrade_consumer_lag{group}` — Gauge, sampled after every batch
+
+Each worker exposes its own scrape endpoint (`METRICS_PORT_WORKER_BASE` +
+index) specifically so Grafana can break throughput down **per worker**, not
+just as an aggregate — the whole point of a distributed worker pool is that
+work is split across processes, and the dashboard should be able to show that
+split, not hide it behind a sum.
+
+Prometheus and Grafana are provisioned via `docker-compose.yml`
+(`observability/prometheus.yml` for scrape targets, `observability/grafana/provisioning/`
+for the datasource and dashboard) — no manual dashboard setup required.
+
+This is a real screenshot, not a mockup — captured while the ingestor was
+pulling live Coinbase ticks and 4 workers were draining them concurrently:
+
+![Live Grafana dashboard showing per-worker throughput, ingestion by symbol, consumer lag, and batch write latency](reports/grafana_dashboard.jpg)
+
+Top-left tracks live ingestion split by symbol (BTC-USD vs ETH-USD); top-right
+shows all 4 workers actively processing at once — distinct colored lines
+because each worker really is a separate OS process with its own metrics
+endpoint, not a single aggregate counter split after the fact.
+
 ## Limitations
 
 - **Single-machine Redis and Postgres**, not a cluster — this proves the
   consumer-group fan-out pattern works, not that it survives node failure.
-- **The publisher, not the worker/store path, was the load test's limiting
-  factor.** The distributed side's true ceiling is still unknown; a
-  multi-process or batched publisher is the natural next load-test target.
-- **Per-row autocommitted inserts** in the store layer (no batching) — likely
-  the next bottleneck once the publisher stops being the limit, but wasn't
-  reachable in this run.
+- **The worker/store pipeline's real ceiling is still unknown** — even a
+  batched, multi-process publisher pushed to 1.5M msg/s target never made it
+  fall behind permanently. Finding that number would need an even faster
+  publisher (e.g. `redis-benchmark` or a compiled client) to actually
+  saturate the consumption side, which this project stops short of.
+- **The publisher's own ~80k–140k msg/s plateau has real run-to-run
+  variance at extreme load** — consistent with CPU contention between
+  publisher and worker processes on one dev machine, not a clean
+  deterministic wall. A multi-machine setup would isolate that variable.
 - **Synthetic toy strategy**, not a live trading strategy — the trade book
   simulator's fills are randomized momentum trades, not anything
   economically meaningful.
@@ -270,18 +342,20 @@ system's — it's the load test above that characterizes the pipeline itself.
 ```
 post-trade-reconciliation-pipeline/
 ├── src/posttrade/
-│   ├── models/       # Tick, Trade, Fill, Position, Break (Pydantic)
-│   ├── ingest/        # async_ingestor.py
-│   ├── queue/          # redis_stream.py
-│   ├── workers/          # worker.py, worker_pool.py
-│   ├── storage/            # timeseries_store.py, book_store.py
+│   ├── models/          # Tick, Trade, Fill, Position, Break (Pydantic)
+│   ├── ingest/           # async_ingestor.py
+│   ├── queue/             # redis_stream.py
+│   ├── workers/            # worker.py, worker_pool.py
+│   ├── storage/             # timeseries_store.py, book_store.py
 │   ├── simulate/              # trade_book_simulator.py
-│   ├── reconcile/                # reconciler.py
-│   ├── loadtest/                    # load_harness.py
+│   ├── reconcile/               # reconciler.py
+│   ├── loadtest/                  # load_harness.py
+│   ├── observability/               # logging_config.py, metrics.py
 │   └── report/                        # report.py
-├── tests/            # 27 tests: unit + fakeredis integration
-├── scripts/          # run_pipeline.sh, run_load_test.sh
-├── reports/          # generated break_report.md, load test chart + json
-└── docker-compose.yml  # Redis + TimescaleDB
+├── observability/       # prometheus.yml, grafana provisioning + dashboard JSON
+├── tests/               # 28 tests: unit + fakeredis integration
+├── scripts/             # run_pipeline.sh, run_load_test.sh
+├── reports/             # generated break_report.md, chart + json, Grafana screenshot
+└── docker-compose.yml   # Redis, TimescaleDB, Prometheus, Grafana
 ```
 

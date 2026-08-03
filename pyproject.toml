@@ -12,6 +12,7 @@ dependencies = [
     "duckdb>=1.0",
     "python-dotenv>=1.0",
     "matplotlib>=3.8",
+    "prometheus-client>=0.20",
 ]
 
 [project.optional-dependencies]

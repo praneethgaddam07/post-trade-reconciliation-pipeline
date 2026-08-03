@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: posttrade
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 5
+    options:
+      path: /etc/grafana/provisioning/dashboards

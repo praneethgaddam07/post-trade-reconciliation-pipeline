@@ -35,9 +35,12 @@ VALUES (%(exchange_timestamp)s, %(symbol)s, %(sequence)s, %(price)s, %(size)s,
         %(side)s, %(exchange)s, %(channel)s, %(ingest_timestamp)s, %(worker)s)
 """
 
+_COPY_SQL = "COPY ticks (time, symbol, sequence, price, size, side, exchange, channel, ingest_time, worker) FROM STDIN"
+
 
 class TickStore(Protocol):
     def write_tick(self, tick: Tick, worker: str | None = None) -> None: ...
+    def write_ticks_batch(self, ticks: list[Tick], worker: str | None = None) -> int: ...
     def count(self) -> int: ...
     def delete_sequences(self, symbol: str, sequences: list[int]) -> list[int]: ...
     def read_ticks_df(self, symbol: str, start: datetime, end: datetime) -> pd.DataFrame: ...
@@ -79,6 +82,30 @@ class TimescaleTickStore:
                     "worker": worker,
                 },
             )
+
+    def write_ticks_batch(self, ticks: list[Tick], worker: str | None = None) -> int:
+        """Writes a batch of ticks in a single COPY round-trip instead of one
+        autocommitted INSERT per tick — the single-row insert path is a real
+        bottleneck under load (see load test results)."""
+        if not ticks:
+            return 0
+        with self._conn.cursor() as cur, cur.copy(_COPY_SQL) as copy:
+            for tick in ticks:
+                copy.write_row(
+                    (
+                        tick.exchange_timestamp,
+                        tick.symbol,
+                        tick.sequence,
+                        tick.price,
+                        tick.size,
+                        tick.side.value if tick.side else None,
+                        tick.exchange.value,
+                        tick.channel,
+                        tick.ingest_timestamp,
+                        worker,
+                    )
+                )
+        return len(ticks)
 
     def count(self) -> int:
         with self._conn.cursor() as cur:
@@ -152,6 +179,27 @@ class DuckDBTickStore:
                 worker,
             ],
         )
+
+    def write_ticks_batch(self, ticks: list[Tick], worker: str | None = None) -> int:
+        if not ticks:
+            return 0
+        rows = [
+            (
+                tick.exchange_timestamp,
+                tick.symbol,
+                tick.sequence,
+                float(tick.price),
+                float(tick.size) if tick.size is not None else None,
+                tick.side.value if tick.side else None,
+                tick.exchange.value,
+                tick.channel,
+                tick.ingest_timestamp,
+                worker,
+            )
+            for tick in ticks
+        ]
+        self._conn.executemany("INSERT INTO ticks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        return len(ticks)
 
     def count(self) -> int:
         return self._conn.execute("SELECT count(*) FROM ticks").fetchone()[0]
