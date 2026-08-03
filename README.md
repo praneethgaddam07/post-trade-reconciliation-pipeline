@@ -285,15 +285,3 @@ post-trade-reconciliation-pipeline/
 └── docker-compose.yml  # Redis + TimescaleDB
 ```
 
-## Why this fits the role
-
-Typed, object-oriented Python throughout (the posting names this
-specifically — not just the output, the design). A real distributed system:
-Redis Streams consumer groups genuinely split work across OS processes,
-verified independently at both the queue layer and the storage layer, not
-just claimed. High-volume data handling load-tested to an actual measured
-ceiling, with the honesty to report that the ceiling found was the
-publisher's, not the pipeline's, and say so plainly. A testable codebase —
-27 tests including a real ephemeral-Redis integration test and a
-reconciliation suite scored against planted ground truth, not assumed
-correct. No finance background required to build any of it.
