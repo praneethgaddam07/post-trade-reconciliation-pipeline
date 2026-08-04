@@ -1,0 +1,112 @@
+{
+  "expectations": [
+    {
+      "id": "a95d3c01-1ebb-4c52-ab41-10cd23f8f9d9",
+      "kwargs": {
+        "column": "symbol"
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_not_be_null"
+    },
+    {
+      "id": "5e092418-1050-4cb8-b8fb-2f0e1ae96dcd",
+      "kwargs": {
+        "column": "sequence"
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_not_be_null"
+    },
+    {
+      "id": "550ac865-98df-45c8-81f4-0ec30b267045",
+      "kwargs": {
+        "column": "price"
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_not_be_null"
+    },
+    {
+      "id": "0865caaf-c37c-4a58-9f50-4d57130ad3a7",
+      "kwargs": {
+        "column": "exchange_timestamp"
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_not_be_null"
+    },
+    {
+      "id": "89115bd2-21be-44c5-9ff0-0eef36d475de",
+      "kwargs": {
+        "column": "ingest_timestamp"
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_not_be_null"
+    },
+    {
+      "id": "fb170d0f-7f89-4564-b71a-cb9367d0cf28",
+      "kwargs": {
+        "column": "price",
+        "max_value": 10000000.0,
+        "min_value": 0.0
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_be_between"
+    },
+    {
+      "id": "d9d28178-75c7-4144-84ec-f0bb3b1135f9",
+      "kwargs": {
+        "column": "sequence",
+        "min_value": 1.0
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_be_between"
+    },
+    {
+      "id": "e31cc391-edf8-446c-b4a6-1f046e4d7469",
+      "kwargs": {
+        "column": "side",
+        "value_set": [
+          "buy",
+          "sell"
+        ]
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_values_to_be_in_set"
+    },
+    {
+      "id": "ad7c1765-4aeb-4e8b-9e4e-068f90af510d",
+      "kwargs": {
+        "column_A": "ingest_timestamp",
+        "column_B": "exchange_timestamp",
+        "or_equal": true
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_column_pair_values_a_to_be_greater_than_b"
+    },
+    {
+      "id": "4fc2dda4-091b-481b-afbf-a724d2698986",
+      "kwargs": {
+        "column_list": [
+          "symbol",
+          "sequence"
+        ]
+      },
+      "meta": {},
+      "severity": "critical",
+      "type": "expect_compound_columns_to_be_unique"
+    }
+  ],
+  "id": "e48ab2d8-a495-47b2-8166-df85e59a5d24",
+  "meta": {
+    "great_expectations_version": "1.19.1"
+  },
+  "name": "silver_ticks_suite",
+  "notes": null
+}

@@ -14,3 +14,14 @@ reports/*.html
 !reports/load_test_throughput_lag.png
 *.duckdb
 .DS_Store
+
+# data engineering layer — generated/derived, not source
+dataeng_lake/
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+dbt/.user.yml
+.dagster_home/
+gx_project/uncommitted/
+gx_project/gx/uncommitted/
+.tmp_dagster_home_*/

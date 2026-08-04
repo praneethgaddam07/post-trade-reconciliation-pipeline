@@ -1,0 +1,6 @@
+posttrade_gold:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('GOLD_DUCKDB_PATH', '../dataeng_lake/gold/posttrade_gold.duckdb') }}"

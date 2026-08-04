@@ -23,6 +23,17 @@ dev = [
     "mypy>=1.9",
     "ruff>=0.4",
     "pandas-stubs>=2.2",
+    "boto3-stubs[s3]>=1.34",
+    "pyarrow-stubs>=17.0",
+]
+dataeng = [
+    "boto3>=1.34",
+    "pyarrow>=16.0",
+    "polars>=1.0",
+    "dbt-duckdb>=1.8",
+    "dagster>=1.7",
+    "dagster-webserver>=1.7",
+    "great-expectations>=0.18",
 ]
 
 [build-system]
@@ -34,6 +45,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 posttrade = ["py.typed"]
+dataeng = ["py.typed"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -49,6 +61,17 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 disallow_untyped_calls = false
 
+[[tool.mypy.overrides]]
+# great_expectations doesn't ship reliable type stubs and its Fluent API
+# is dynamically constructed (crud methods registered at runtime), which
+# defeats static analysis regardless of stub quality.
+module = "great_expectations.*"
+ignore_missing_imports = true
+follow_imports = "skip"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint.isort]
+known-first-party = ["posttrade", "dataeng"]

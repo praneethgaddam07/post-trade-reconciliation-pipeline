@@ -1,0 +1,31 @@
+version: 2
+
+sources:
+  - name: dataeng_silver
+    meta:
+      external_location: "read_parquet('{{ env_var('SILVER_PATH', '../dataeng_lake/silver') }}/ticks/**/*.parquet', union_by_name=true)"
+    tables:
+      - name: ticks
+        description: "Silver-layer normalized ticks — deduplicated and schema-enforced from bronze, one row per exchange tick/match message."
+        loaded_at_field: ingest_timestamp
+        freshness:
+          warn_after: { count: 1, period: hour }
+          error_after: { count: 24, period: hour }
+        columns:
+          - name: symbol
+            description: "Trading pair, e.g. BTC-USD."
+            data_tests:
+              - not_null
+          - name: sequence
+            description: "Per-symbol monotonic sequence assigned at ingest — the gap-detection axis."
+            data_tests:
+              - not_null
+          - name: price
+            data_tests:
+              - not_null
+          - name: side
+            data_tests:
+              - accepted_values:
+                  values: ["buy", "sell"]
+                  config:
+                    severity: warn # ticker messages can legitimately have a null side

@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -40,12 +41,18 @@ class AsyncIngestor:
         redis_url: str | None = None,
         stream_name: str | None = None,
         throughput_log_interval: float = 5.0,
+        on_raw_message: Callable[[str, str], None] | None = None,
     ) -> None:
         self.ws_url = ws_url or settings.coinbase_ws_url
         self.symbols = symbols or settings.symbols
         self.redis_url = redis_url or settings.redis_url
         self.stream_name = stream_name or settings.redis_stream_name
         self.throughput_log_interval = throughput_log_interval
+        # Optional hook for landing raw, pre-normalization messages (e.g. a
+        # bronze-layer writer). Kept as a plain callback rather than an
+        # import so this package never needs to depend on whatever storage
+        # library the hook uses — see dataeng/bronze for the real one.
+        self.on_raw_message = on_raw_message
 
         self._sequences: dict[str, itertools.count[int]] = defaultdict(lambda: itertools.count(1))
         self._publisher: StreamPublisher | None = None
@@ -91,13 +98,24 @@ class AsyncIngestor:
         msg_type = data.get("type")
         if msg_type not in _RELEVANT_TYPES:
             return
-        tick = self._normalize(data, msg_type)
+
+        # Bronze capture happens on every relevant message regardless of
+        # whether normalization below succeeds — the point of a bronze
+        # layer is raw fidelity, including messages silver might later
+        # reject (e.g. one with a price field mid-migration on the
+        # exchange's side). Land it first, then try to normalize.
+        symbol = data.get("product_id")
+        if symbol is not None and self.on_raw_message is not None:
+            raw_text = raw if isinstance(raw, str) else raw.decode("utf-8")
+            self.on_raw_message(symbol, raw_text)
+
+        tick = self.normalize(data, msg_type)
         if tick is None:
             return
         await self._publish(tick)
         self._log_throughput()
 
-    def _normalize(self, data: dict[str, Any], msg_type: str) -> Tick | None:
+    def normalize(self, data: dict[str, Any], msg_type: str) -> Tick | None:
         symbol = data.get("product_id")
         price_raw = data.get("price")
         if symbol is None or price_raw is None:

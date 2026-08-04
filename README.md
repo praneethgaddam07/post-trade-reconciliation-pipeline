@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/praneethgaddam07/post-trade-reconciliation-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/praneethgaddam07/post-trade-reconciliation-pipeline/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-29%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-38%20passing-brightgreen)
 ![mypy](https://img.shields.io/badge/mypy-strict-2A6DB2)
 ![Redis Streams](https://img.shields.io/badge/queue-Redis%20Streams%20%2B%20consumer%20group-DC382D?logo=redis&logoColor=white)
 ![TimescaleDB](https://img.shields.io/badge/storage-TimescaleDB-FDB515)
@@ -35,7 +35,7 @@ no rounding up — where the system fell short of "clean," that's reported too
 | **Publisher throughput ceiling** | client-side saturation at **~80,000–140,000 msg/s** (batched, multi-process publisher; ramped 2,000 → 1,500,000 msg/s target) |
 | **Worker/store pipeline ceiling** | **still not found** — fully drained a 174,000-message backlog every time, even at 1.5M msg/s target |
 | **Bugs found & fixed via this measurement** | position-drift sort-key bug (397 false positives) and a single-asyncio-loop publisher masquerading as "the ceiling" — both root-caused, fixed, regression-tested |
-| **Test suite** | **29/29 passing**, incl. a crash/recovery test (worker dies mid-batch, `XAUTOCLAIM` reclaims its PENDING entries) — not just happy-path delivery |
+| **Test suite** | **38/38 passing**, incl. a crash/recovery test (worker dies mid-batch, `XAUTOCLAIM` reclaims its PENDING entries) — not just happy-path delivery |
 | **Type/lint** | `mypy --strict` clean on `src/`, `ruff` clean, enforced on every push via GitHub Actions |
 | **Observability** | structured JSON logs + Prometheus metrics per worker, live Grafana dashboard — [real screenshot below](#observability), not a mockup |
 
@@ -135,6 +135,12 @@ actually written to TimescaleDB.
 - **Prometheus + Grafana** for live metrics (ticks/sec by worker, consumer
   lag, batch write latency), **structured JSON logging** throughout the
   ingestor and workers
+- **Data engineering layer** ([full write-up](docs/data-engineering.md)):
+  **MinIO** (bronze, S3-compatible), **Parquet** with `decimal128` (silver),
+  **dbt + DuckDB** (gold, 19 passing tests), **Dagster** (assets, sensor,
+  backfill/reconciliation jobs), **Great Expectations** (10-expectation
+  suite with real pass/fail history), **Polars + DuckDB** (182.5M-row
+  partition-pruning benchmark)
 
 ## How to run it locally
 
@@ -149,12 +155,18 @@ docker compose up -d   # Redis, TimescaleDB, Prometheus, Grafana
 ./scripts/run_load_test.sh   # find the throughput ceiling
 ./scripts/run_pipeline.sh    # ingest, drain, simulate anomalies, reconcile
 
-pytest -v                    # 29 tests, unit + fakeredis integration
+pytest -v                    # 38 tests, unit + fakeredis + MinIO + GX integration
 ```
 
 Grafana is live at `http://localhost:3000` (anonymous viewer access) once
 the ingestor and workers are running — see [Observability](#observability)
 below.
+
+For the data engineering layer (bronze/silver/gold, Dagster, Great
+Expectations, the scale test) — `pip install -e ".[dataeng]"` and see
+[`docs/data-engineering.md`](docs/data-engineering.md#how-to-run-it) for
+the full command set; it's a separate optional dependency group from the
+core streaming pipeline above.
 
 ## Results
 
@@ -350,6 +362,31 @@ files isn't standard practice), and the full pytest suite against real Redis
 and TimescaleDB service containers — the same infra dependency as running it
 locally, not mocked away for CI's sake.
 
+## Data Engineering Layer
+
+A medallion architecture (bronze → silver → gold) and orchestration layer
+built on top of the streaming pipeline above — full write-up, diagrams, and
+every real number in **[`docs/data-engineering.md`](docs/data-engineering.md)**.
+Summary:
+
+| | |
+|---|---|
+| **Bronze** | MinIO, raw exchange JSON landed as NDJSON, Hive-partitioned by symbol/date/hour |
+| **Silver** | Deduplicated, schema-enforced Parquet (`decimal128`, not float) — reuses `AsyncIngestor.normalize()` directly, the same code the live streaming path runs (genuine Kappa architecture) |
+| **Gold** | dbt + DuckDB — 4 models, **19/19 tests passing**, incl. a custom sequence-contiguity test proven to catch a planted gap, and working source freshness |
+| **Orchestration** | Dagster — assets, a sensor that bridges the always-on ingestor to batch processing, a Kappa-replay backfill job, an hourly reconciliation job — verified via CLI **and** a live UI session with a real "Success" run |
+| **Data quality** | Great Expectations — a 10-expectation suite run via a real Checkpoint, Data Docs showing genuine **pass/fail history**, proven to catch planted violations (negative price, duplicate sequence) |
+| **Scale test** | **182,500,000 rows** generated and benchmarked for real (not an extrapolated claim) — found that naive glob-based partition "pruning" barely beats a full scan (2.0x) because file-tree enumeration dominates, while direct partition targeting is **~3,000–5,800x** faster — the measured reason production systems use a partition catalog instead of a filesystem glob |
+
+**A real bug found via this layer:** re-materializing a silver partition
+didn't clear the prior output file, so a repeated Dagster run took a
+correct 134-row partition to 402 rows (exactly 3×) once it reached gold.
+Caught live in the Dagster UI, fixed, regression-tested.
+
+![Dagster asset lineage with real materialization metadata](reports/dagster_asset_lineage.jpg)
+
+![Great Expectations Data Docs showing real pass/fail validation history](reports/ge_data_docs_validation_history.jpg)
+
 ## Limitations
 
 - **Single-machine Redis and Postgres**, not a cluster — this proves the
@@ -369,13 +406,19 @@ locally, not mocked away for CI's sake.
 - **`sequence_gap` ground truth is structural, not ID-based** — see the
   Results section above for why found-runs can sit slightly below
   planted-events even at perfect detection.
+- **No CDC, no real partition catalog, DuckDB is single-node** — see
+  [`docs/data-engineering.md`](docs/data-engineering.md#limitations) for
+  the full list and the reasoning behind each.
 
 ## Repo structure
 
 ```
 post-trade-reconciliation-pipeline/
 ├── .github/workflows/    # ci.yml — ruff, mypy --strict, pytest on every push/PR
-├── src/posttrade/
+├── docs/
+│   └── data-engineering.md  # full DE layer write-up, diagrams, real numbers
+├── dbt/                  # gold layer: staging + marts models, custom tests
+├── src/posttrade/        # streaming pipeline (see main sections above)
 │   ├── models/          # Tick, Trade, Fill, Position, Break (Pydantic)
 │   ├── ingest/           # async_ingestor.py
 │   ├── queue/             # redis_stream.py
@@ -386,8 +429,14 @@ post-trade-reconciliation-pipeline/
 │   ├── loadtest/                  # load_harness.py
 │   ├── observability/               # logging_config.py, metrics.py
 │   └── report/                        # report.py
+├── src/dataeng/          # data engineering layer
+│   ├── bronze/           # BronzeWriter, MinIO S3 client
+│   ├── silver/            # silver_transform.py (dedup, schema, Kappa reuse)
+│   ├── orchestration/      # Dagster assets, sensor, jobs, schedules
+│   ├── quality/             # Great Expectations suite
+│   └── scale/                # 182.5M-row generator + partition-pruning benchmark
 ├── observability/       # prometheus.yml, grafana provisioning + dashboard JSON
-├── tests/               # 29 tests: unit + fakeredis integration
+├── tests/               # 38 tests: unit + fakeredis + MinIO + GX integration
 ├── scripts/             # run_pipeline.sh, run_load_test.sh
 ├── reports/             # generated break_report.md, chart + json, Grafana screenshot
 └── docker-compose.yml   # Redis, TimescaleDB, Prometheus, Grafana

@@ -22,7 +22,7 @@ def test_normalize_ticker_message():
         "side": "buy",
         "time": "2026-01-01T00:00:00.000000Z",
     }
-    tick = ingestor._normalize(msg, "ticker")
+    tick = ingestor.normalize(msg, "ticker")
     assert tick is not None
     assert tick.symbol == "BTC-USD"
     assert tick.price == Decimal("50000.12")
@@ -34,7 +34,7 @@ def test_normalize_ticker_message():
 def test_normalize_match_message_uses_matches_channel():
     ingestor = make_ingestor()
     msg = {"type": "match", "product_id": "BTC-USD", "price": "50001.00", "size": "0.01", "side": "sell"}
-    tick = ingestor._normalize(msg, "match")
+    tick = ingestor.normalize(msg, "match")
     assert tick is not None
     assert tick.channel == "matches"
     assert tick.size == Decimal("0.01")
@@ -43,9 +43,9 @@ def test_normalize_match_message_uses_matches_channel():
 
 def test_normalize_assigns_independent_sequences_per_symbol():
     ingestor = make_ingestor()
-    btc1 = ingestor._normalize({"type": "ticker", "product_id": "BTC-USD", "price": "1"}, "ticker")
-    eth1 = ingestor._normalize({"type": "ticker", "product_id": "ETH-USD", "price": "1"}, "ticker")
-    btc2 = ingestor._normalize({"type": "ticker", "product_id": "BTC-USD", "price": "1"}, "ticker")
+    btc1 = ingestor.normalize({"type": "ticker", "product_id": "BTC-USD", "price": "1"}, "ticker")
+    eth1 = ingestor.normalize({"type": "ticker", "product_id": "ETH-USD", "price": "1"}, "ticker")
+    btc2 = ingestor.normalize({"type": "ticker", "product_id": "BTC-USD", "price": "1"}, "ticker")
     assert btc1.sequence == 1
     assert eth1.sequence == 1
     assert btc2.sequence == 2
@@ -53,25 +53,25 @@ def test_normalize_assigns_independent_sequences_per_symbol():
 
 def test_normalize_missing_product_id_returns_none():
     ingestor = make_ingestor()
-    tick = ingestor._normalize({"type": "ticker", "price": "1"}, "ticker")
+    tick = ingestor.normalize({"type": "ticker", "price": "1"}, "ticker")
     assert tick is None
 
 
 def test_normalize_missing_price_returns_none():
     ingestor = make_ingestor()
-    tick = ingestor._normalize({"type": "ticker", "product_id": "BTC-USD"}, "ticker")
+    tick = ingestor.normalize({"type": "ticker", "product_id": "BTC-USD"}, "ticker")
     assert tick is None
 
 
 def test_normalize_malformed_price_returns_none():
     ingestor = make_ingestor()
-    tick = ingestor._normalize({"type": "ticker", "product_id": "BTC-USD", "price": "not-a-number"}, "ticker")
+    tick = ingestor.normalize({"type": "ticker", "product_id": "BTC-USD", "price": "not-a-number"}, "ticker")
     assert tick is None
 
 
 def test_normalize_malformed_size_is_dropped_but_tick_still_produced():
     ingestor = make_ingestor()
-    tick = ingestor._normalize(
+    tick = ingestor.normalize(
         {"type": "ticker", "product_id": "BTC-USD", "price": "1", "size": "garbage"}, "ticker"
     )
     assert tick is not None
@@ -80,6 +80,6 @@ def test_normalize_malformed_size_is_dropped_but_tick_still_produced():
 
 def test_normalize_missing_time_falls_back_to_now():
     ingestor = make_ingestor()
-    tick = ingestor._normalize({"type": "ticker", "product_id": "BTC-USD", "price": "1"}, "ticker")
+    tick = ingestor.normalize({"type": "ticker", "product_id": "BTC-USD", "price": "1"}, "ticker")
     assert tick is not None
     assert tick.exchange_timestamp is not None

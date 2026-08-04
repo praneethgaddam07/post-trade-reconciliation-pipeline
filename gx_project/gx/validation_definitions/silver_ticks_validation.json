@@ -1,0 +1,22 @@
+{
+  "data": {
+    "asset": {
+      "id": "54f305ff-2db5-4262-958c-e4cd2d41d8c8",
+      "name": "silver_ticks"
+    },
+    "batch_definition": {
+      "id": "70a88b38-d1b9-41d1-b1b2-088aa69c851c",
+      "name": "whole"
+    },
+    "datasource": {
+      "id": "e3d7ee14-c648-40a8-be96-48461784dccb",
+      "name": "silver_pandas"
+    }
+  },
+  "id": "d4b00835-f2e9-4647-b48c-478716bf6d43",
+  "name": "silver_ticks_validation",
+  "suite": {
+    "id": "e48ab2d8-a495-47b2-8166-df85e59a5d24",
+    "name": "silver_ticks_suite"
+  }
+}

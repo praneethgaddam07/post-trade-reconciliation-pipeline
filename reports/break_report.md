@@ -1,14 +1,14 @@
 # Break Report
 
-Generated 2026-08-03T22:00:09.399701+00:00 — symbols: BTC-USD, ETH-USD
+Generated 2026-08-04T00:45:33.516737+00:00 — symbols: BTC-USD, ETH-USD
 
-**Total breaks found: 162**
+**Total breaks found: 114**
 
 | Break type | Count |
 |---|---|
 | unmatched_fill | 60 |
 | position_drift | 51 |
-| sequence_gap | 51 |
+| sequence_gap | 3 |
 
 ## Measured precision / recall against planted ground truth
 
@@ -16,7 +16,7 @@ Generated 2026-08-03T22:00:09.399701+00:00 — symbols: BTC-USD, ETH-USD
 |---|---|---|---|---|
 | unmatched_fill | 60 | 60 | 1.000 | 1.000 |
 | position_drift | 51 | 51 | 1.000 | 1.000 |
-| sequence_gap | 53 (events) | 51 (contiguous runs found) | — | — |
+| sequence_gap | 53 (events) | 3 (contiguous runs found) | — | — |
 
 sequence_gap is scored by structural comparison, not a shared ID: adjacent or overlapping planted gaps can merge into one contiguous missing run in the underlying data, so found-runs can be slightly below planted-events even at perfect detection.
 
