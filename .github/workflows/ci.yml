@@ -46,10 +46,25 @@ jobs:
         with:
           python-version: "3.13"
 
+      # MinIO (for the data engineering layer's bronze tests) needs a
+      # specific start command ("server /data"), which GitHub Actions'
+      # `services:` block can't override -- it always runs the image's
+      # default entrypoint. Starting it as a plain docker run step instead
+      # gives full control over the command.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=posttrade -e MINIO_ROOT_PASSWORD=posttrade123 \
+            minio/minio server /data --console-address ":9001"
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,dataeng]"
 
       - name: Ruff
         run: ruff check .
